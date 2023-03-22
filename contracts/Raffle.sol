@@ -88,9 +88,11 @@ contract Raffle is VRFConsumerBaseV2, KeeperCompatibleInterface {
         s_owner=payable(msg.sender);
     }
 
-   
+    fallback()external{
+        enterRaffle();
+    }
 
-    function enterRaffle() external payable {
+    function enterRaffle() public payable {
         // require(msg.value >= i_entranceFee, "Not enough value sent");
         // require(s_raffleState == RaffleState.OPEN, "Raffle is not open");
         if (msg.value < i_entranceFee) {
