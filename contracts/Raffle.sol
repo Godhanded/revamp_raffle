@@ -9,6 +9,7 @@ import "@chainlink/contracts/src/v0.8/interfaces/KeeperCompatibleInterface.sol";
 /* Errors */
 error Raffle__UpkeepNotNeeded(uint256 currentBalance, uint256 numPlayers, uint256 raffleState);
 error Raffle__SendMoreToEnterRaffle();
+error Raffle__RaffleNotFailed();
 error Raffle__TransferFailed();
 error Raffle__RaffleNotOpen();
 error Raffle__AlreadyPaid();
@@ -55,9 +56,13 @@ contract Raffle is VRFConsumerBaseV2, KeeperCompatibleInterface {
     /* Mappings */
     mapping(uint256 => address payable[]) private s_raffleToPlayers; // each raffle to its players
     mapping(uint256 => Winner) private s_raffleToWinner; // each raffle to their winner
+    mapping(uint256 => bool) private s_failedraffle; // if mimumRafflePyout is not reached raffle is tagged failed
+    mapping(uint256 => mapping(address => uint256)) private s_rafflePlayerToEntries;
 
     /* Events */
+    event RaffleFailed(uint256 indexed raffleId);
     event RequestedRaffleWinner(uint256 indexed requestId);
+
     event RaffleEnter(uint256 indexed raffleId, address indexed player);
     event WinnerPicked(uint256 indexed raffleId, address indexed player);
 
@@ -102,6 +107,7 @@ contract Raffle is VRFConsumerBaseV2, KeeperCompatibleInterface {
         uint256 currentRaffle = s_currentRaffle;
         s_feeBalance += (msg.value * 10) / 100;
         s_raffleToPlayers[currentRaffle].push(payable(msg.sender));
+        s_rafflePlayerToEntries[currentRaffle][msg.sender] += 1;
         // Emit an event when we update a dynamic array or mapping
         // Named events with the function name reversed
         emit RaffleEnter(currentRaffle, msg.sender);
@@ -124,8 +130,7 @@ contract Raffle is VRFConsumerBaseV2, KeeperCompatibleInterface {
         bool timePassed = ((block.timestamp - s_lastTimeStamp) > i_interval);
         bool hasPlayers = playerLength > 0;
         bool hasBalance = address(this).balance > 0;
-        bool hasMinPayout = (playerLength * i_entranceFee) >= i_minimumRafflePayout;
-        upkeepNeeded = (timePassed && isOpen && hasBalance && hasPlayers && hasMinPayout);
+        upkeepNeeded = (timePassed && isOpen && hasBalance && hasPlayers);
         return (upkeepNeeded, "0x0"); // can I comment this out?
     }
 
@@ -171,20 +176,30 @@ contract Raffle is VRFConsumerBaseV2, KeeperCompatibleInterface {
         // 2
         // 202 % 10 = 2
         uint256 currentRaffle = s_currentRaffle;
+
         address payable[] memory players = s_raffleToPlayers[currentRaffle];
-        uint256 indexOfWinner = randomWords[0] % players.length;
-        address payable recentWinner = players[indexOfWinner];
-        Winner memory winner = Winner(
-            payable(recentWinner),
-            (players.length * i_entranceFee * 90) / 100,
-            false
-        );
-        s_recentWinner = winner;
-        s_raffleToWinner[currentRaffle] = winner;
-        s_currentRaffle += 1;
-        s_raffleState = RaffleState.OPEN;
-        s_lastTimeStamp = block.timestamp;
-        emit WinnerPicked(currentRaffle, recentWinner);
+        if ((players.length * i_entranceFee) < i_minimumRafflePayout) {
+            s_failedraffle[currentRaffle] = true;
+            s_currentRaffle += 1;
+            s_raffleState = RaffleState.OPEN;
+            s_lastTimeStamp = block.timestamp;
+            s_recentWinner = Winner(payable(address(0)), 0, false);
+            emit RaffleFailed(currentRaffle);
+        } else {
+            uint256 indexOfWinner = randomWords[0] % players.length;
+            address payable recentWinner = players[indexOfWinner];
+            Winner memory winner = Winner(
+                payable(recentWinner),
+                (players.length * i_entranceFee * 90) / 100,
+                false
+            );
+            s_recentWinner = winner;
+            s_raffleToWinner[currentRaffle] = winner;
+            s_currentRaffle += 1;
+            s_raffleState = RaffleState.OPEN;
+            s_lastTimeStamp = block.timestamp;
+            emit WinnerPicked(currentRaffle, recentWinner);
+        }
     }
 
     function winnerWithdraw(uint256 raffleId) external {
@@ -201,7 +216,19 @@ contract Raffle is VRFConsumerBaseV2, KeeperCompatibleInterface {
         if (amount > s_feeBalance) revert Raffle__TransferFailed();
         s_feeBalance -= amount;
         (bool success, ) = s_owner.call{value: amount}("");
-        if (!success) {
+        if (!success) revert Raffle__TransferFailed();
+    }
+
+    function failedRaffleWithdraw(uint256 raffleId) external {
+        if (!s_failedraffle[raffleId]) revert Raffle__RaffleNotFailed();
+        uint256 entries = s_rafflePlayerToEntries[raffleId][msg.sender];
+        if (entries != 0) {
+            s_rafflePlayerToEntries[raffleId][msg.sender] = 0;
+            (bool success, ) = payable(msg.sender).call{
+                value: ((i_entranceFee * entries * 90) / 100)
+            }("");
+            if (!success) revert Raffle__TransferFailed();
+        } else {
             revert Raffle__TransferFailed();
         }
     }
@@ -275,6 +302,17 @@ contract Raffle is VRFConsumerBaseV2, KeeperCompatibleInterface {
 
     function getFeeBalance() external view returns (uint256) {
         return s_feeBalance;
+    }
+
+    function getPlayerEntries(uint256 raffleId) external view returns (uint256) {
+        return s_rafflePlayerToEntries[raffleId][msg.sender];
+    }
+
+    function getFailedRaffle(uint256 raffleId) external view returns (bool failed, uint256 total) {
+        (failed, total) = (
+            s_failedraffle[raffleId],
+            s_raffleToPlayers[s_currentRaffle].length * i_entranceFee
+        );
     }
 
     function getOwner() external view returns (address) {
