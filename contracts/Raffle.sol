@@ -14,7 +14,7 @@ error Raffle__RaffleNotOpen();
 error Raffle__AlreadyPaid();
 error Raffle__NotOwner();
 
-/**@title A revamp of Patrick Collins raffle contract
+/**@title A raffle contract
  * @author Godand
  * @notice This contract would handle multiple raffles,logic for payments etc
  * @dev This implements the Chainlink VRF Version 2 and chainlink Keepers
@@ -24,6 +24,13 @@ contract Raffle is VRFConsumerBaseV2, KeeperCompatibleInterface {
     enum RaffleState {
         OPEN,
         CALCULATING
+    }
+
+    // Winner structure
+    struct Winner {
+        address payable winner;
+        uint256 payAmount;
+        bool isPaid;
     }
     /* State variables */
     // Chainlink VRF Variables
@@ -45,15 +52,10 @@ contract Raffle is VRFConsumerBaseV2, KeeperCompatibleInterface {
     address payable private s_owner;
     RaffleState private s_raffleState;
 
+    /* Mappings */
     mapping(uint256 => address payable[]) private s_raffleToPlayers; // each raffle to its players
     mapping(uint256 => Winner) private s_raffleToWinner; // each raffle to their winner
 
-    // winner structure
-    struct Winner {
-        address payable winner;
-        uint256 payAmount;
-        bool isPaid;
-    }
 
     /* Events */
     event RequestedRaffleWinner(uint256 indexed requestId);
@@ -88,19 +90,16 @@ contract Raffle is VRFConsumerBaseV2, KeeperCompatibleInterface {
         s_owner=payable(msg.sender);
     }
 
-    fallback()external{
+    receive()external payable{
         enterRaffle();
     }
 
     function enterRaffle() public payable {
         // require(msg.value >= i_entranceFee, "Not enough value sent");
         // require(s_raffleState == RaffleState.OPEN, "Raffle is not open");
-        if (msg.value < i_entranceFee) {
-            revert Raffle__SendMoreToEnterRaffle();
-        }
-        if (s_raffleState != RaffleState.OPEN) {
-            revert Raffle__RaffleNotOpen();
-        }
+        if (msg.value < i_entranceFee) revert Raffle__SendMoreToEnterRaffle();
+        if (s_raffleState != RaffleState.OPEN) revert Raffle__RaffleNotOpen();
+
         uint256 currentRaffle = s_currentRaffle;
         s_feeBalance += (msg.value * 10) / 100;
         s_raffleToPlayers[currentRaffle].push(payable(msg.sender));
@@ -236,6 +235,14 @@ contract Raffle is VRFConsumerBaseV2, KeeperCompatibleInterface {
 
     function getPlayer(uint256 raffleId,uint256 index) external view returns (address) {
         return s_raffleToPlayers[raffleId][index];
+    }
+
+    function getPlayers(uint256 raffleId) external view returns (address payable[] memory) {
+        return s_raffleToPlayers[raffleId];
+    }
+
+    function getCurrentPlayers() external view returns (address payable[] memory) {
+        return s_raffleToPlayers[s_currentRaffle];
     }
 
     function getLastTimeStamp() external view returns (uint256) {
