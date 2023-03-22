@@ -73,6 +73,7 @@ contract Raffle is VRFConsumerBaseV2, KeeperCompatibleInterface {
         bytes32 gasLane, // keyHash
         uint256 interval,
         uint256 entranceFee,
+        uint256 minimumRafflePayout,
         uint32 callbackGasLimit
     ) VRFConsumerBaseV2(vrfCoordinatorV2) {
         i_vrfCoordinator = VRFCoordinatorV2Interface(vrfCoordinatorV2);
@@ -80,12 +81,16 @@ contract Raffle is VRFConsumerBaseV2, KeeperCompatibleInterface {
         i_interval = interval;
         i_subscriptionId = subscriptionId;
         i_entranceFee = entranceFee;
+        i_callbackGasLimit = callbackGasLimit;
         s_raffleState = RaffleState.OPEN;
         s_lastTimeStamp = block.timestamp;
-        i_callbackGasLimit = callbackGasLimit;
+        s_minimumRafflePayout=minimumRafflePayout;
+        s_owner=payable(msg.sender);
     }
 
-    function enterRaffle() public payable {
+   
+
+    function enterRaffle() external payable {
         // require(msg.value >= i_entranceFee, "Not enough value sent");
         // require(s_raffleState == RaffleState.OPEN, "Raffle is not open");
         if (msg.value < i_entranceFee) {
@@ -207,39 +212,59 @@ contract Raffle is VRFConsumerBaseV2, KeeperCompatibleInterface {
 
     /** Getter Functions */
 
-    function getRaffleState() public view returns (RaffleState) {
+    function getRaffleState() external view returns (RaffleState) {
         return s_raffleState;
     }
 
-    function getNumWords() public pure returns (uint256) {
+    function getNumWords() external pure returns (uint256) {
         return NUM_WORDS;
     }
 
-    function getRequestConfirmations() public pure returns (uint256) {
+    function getRequestConfirmations() external pure returns (uint256) {
         return REQUEST_CONFIRMATIONS;
     }
 
-    function getRecentWinner() public view returns (address) {
+    function getRecentWinner() external view returns (Winner memory) {
         return s_recentWinner;
     }
 
-    function getPlayer(uint256 index) public view returns (address) {
-        return s_players[index];
+    function getWinner(uint256 raffleId)external view returns(Winner memory){
+        return s_raffleToWinner[raffleId];
     }
 
-    function getLastTimeStamp() public view returns (uint256) {
+    function getPlayer(uint256 raffleId,uint256 index) external view returns (address) {
+        return s_raffleToPlayers[raffleId][index];
+    }
+
+    function getLastTimeStamp() external view returns (uint256) {
         return s_lastTimeStamp;
     }
 
-    function getInterval() public view returns (uint256) {
+    function getInterval() external view returns (uint256) {
         return i_interval;
     }
 
-    function getEntranceFee() public view returns (uint256) {
+    function getEntranceFee() external view returns (uint256) {
         return i_entranceFee;
     }
 
-    function getNumberOfPlayers() public view returns (uint256) {
-        return s_players.length;
+    function getCurrentNumberOfPlayers() external view returns (uint256) {
+        return s_raffleToPlayers[s_currentRaffle].length;
+    }
+
+    function getNumberOfPlayers(uint256 raffleId)external view returns(uint256){
+        return s_raffleToPlayers[raffleId].length;
+    }
+
+    function getMinimumRafflePayout()external view returns(uint256){
+        return s_minimumRafflePayout;
+    }
+
+    function getFeeBalance()external view returns(uint256){
+        return s_feeBalance;
+    }
+
+    function getOwner()external view returns(address){
+        return s_owner;
     }
 }
