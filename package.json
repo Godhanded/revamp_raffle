@@ -25,6 +25,7 @@
     "solhint": "^3.3.7"
   },
   "scripts": {
+    "slither": "slither ./contracts/Raffle.sol --solc-remaps '@openzeppelin=node_modules/@openzeppelin @chainlink=node_modules/@chainlink' --exclude naming-convention,external-functions,low-level-calls",
     "lint": "solhint 'contracts/*.sol'",
     "lint:fix": "solhint 'contracts/**/*.sol' --fix",
     "format": "prettier --write ."

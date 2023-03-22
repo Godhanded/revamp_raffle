@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-pragma solidity ^0.8.19;
+pragma solidity 0.8.18;
 
 import "@chainlink/contracts/src/v0.8/interfaces/VRFCoordinatorV2Interface.sol";
 import "@chainlink/contracts/src/v0.8/VRFConsumerBaseV2.sol";
@@ -23,7 +23,8 @@ contract Raffle is VRFConsumerBaseV2, KeeperCompatibleInterface {
     /* Type declarations */
     enum RaffleState {
         OPEN,
-        CALCULATING
+        CALCULATING,
+        CAR
     }
 
     // Winner structure
@@ -47,7 +48,7 @@ contract Raffle is VRFConsumerBaseV2, KeeperCompatibleInterface {
     uint256 private s_currentRaffle = 0;
     uint256 private s_lastTimeStamp;
     uint256 private s_feeBalance = 0;
-    uint256 private s_minimumRafflePayout;
+    uint256 private immutable i_minimumRafflePayout;
     Winner private s_recentWinner;
     address payable private s_owner;
     RaffleState private s_raffleState;
@@ -56,15 +57,14 @@ contract Raffle is VRFConsumerBaseV2, KeeperCompatibleInterface {
     mapping(uint256 => address payable[]) private s_raffleToPlayers; // each raffle to its players
     mapping(uint256 => Winner) private s_raffleToWinner; // each raffle to their winner
 
-
     /* Events */
     event RequestedRaffleWinner(uint256 indexed requestId);
     event RaffleEnter(uint256 indexed raffleId, address indexed player);
-    event WinnerPicked(uint256 indexed raffleId,address indexed player);
+    event WinnerPicked(uint256 indexed raffleId, address indexed player);
 
     /* Modifiers */
-    modifier onlyOwner {
-        if (payable(msg.sender)!=s_owner) revert Raffle__NotOwner();
+    modifier onlyOwner() {
+        if (payable(msg.sender) != s_owner) revert Raffle__NotOwner();
         _;
     }
 
@@ -86,11 +86,11 @@ contract Raffle is VRFConsumerBaseV2, KeeperCompatibleInterface {
         i_callbackGasLimit = callbackGasLimit;
         s_raffleState = RaffleState.OPEN;
         s_lastTimeStamp = block.timestamp;
-        s_minimumRafflePayout=minimumRafflePayout;
-        s_owner=payable(msg.sender);
+        i_minimumRafflePayout = minimumRafflePayout;
+        s_owner = payable(msg.sender);
     }
 
-    receive()external payable{
+    receive() external payable {
         enterRaffle();
     }
 
@@ -114,7 +114,7 @@ contract Raffle is VRFConsumerBaseV2, KeeperCompatibleInterface {
      * the following should be true for this to return true:
      * 1. The time interval has passed between raffle runs.
      * 2. The lottery is open.
-     * 3. The contract has ETH.
+     * 3. The contract has Coin.
      * 4. Implicity, your subscription is funded with LINK.
      */
     function checkUpkeep(
@@ -125,7 +125,7 @@ contract Raffle is VRFConsumerBaseV2, KeeperCompatibleInterface {
         bool timePassed = ((block.timestamp - s_lastTimeStamp) > i_interval);
         bool hasPlayers = playerLength > 0;
         bool hasBalance = address(this).balance > 0;
-        bool hasMinPayout = (playerLength * i_entranceFee) >= s_minimumRafflePayout;
+        bool hasMinPayout = (playerLength * i_entranceFee) >= i_minimumRafflePayout;
         upkeepNeeded = (timePassed && isOpen && hasBalance && hasPlayers && hasMinPayout);
         return (upkeepNeeded, "0x0"); // can I comment this out?
     }
@@ -167,15 +167,15 @@ contract Raffle is VRFConsumerBaseV2, KeeperCompatibleInterface {
     ) internal override {
         // players size 10
         // randomNumber 202
-        // 202 % 10 ? what's doesn't divide evenly into 202?
+        // 202 % 10 ? remainder
         // 20 * 10 = 200
         // 2
         // 202 % 10 = 2
-        uint256 currentRaffle=s_currentRaffle;
+        uint256 currentRaffle = s_currentRaffle;
         address payable[] memory players = s_raffleToPlayers[currentRaffle];
         uint256 indexOfWinner = randomWords[0] % players.length;
         address payable recentWinner = players[indexOfWinner];
-        Winner memory winner=Winner(
+        Winner memory winner = Winner(
             payable(recentWinner),
             (players.length * i_entranceFee * 90) / 100,
             false
@@ -185,30 +185,31 @@ contract Raffle is VRFConsumerBaseV2, KeeperCompatibleInterface {
         s_currentRaffle += 1;
         s_raffleState = RaffleState.OPEN;
         s_lastTimeStamp = block.timestamp;
-        emit WinnerPicked(currentRaffle,recentWinner);
+        emit WinnerPicked(currentRaffle, recentWinner);
     }
 
-    function winnerWithdraw(uint256 raffleId)external{
-        Winner memory winner=s_raffleToWinner[raffleId];
-        if(winner.isPaid) revert Raffle__AlreadyPaid();
-        s_raffleToWinner[raffleId].isPaid=true;
+    function winnerWithdraw(uint256 raffleId) external {
+        Winner memory winner = s_raffleToWinner[raffleId];
+        if (winner.isPaid) revert Raffle__AlreadyPaid();
+        s_raffleToWinner[raffleId].isPaid = true;
         (bool success, ) = winner.winner.call{value: winner.payAmount}("");
         if (!success) {
             revert Raffle__TransferFailed();
         }
     }
 
-    function ownerWithdraw(uint256 amount)external onlyOwner{
-        if(amount>s_feeBalance) revert Raffle__TransferFailed();
-        s_feeBalance-=amount;
+    function ownerWithdraw(uint256 amount) external onlyOwner {
+        if (amount > s_feeBalance) revert Raffle__TransferFailed();
+        s_feeBalance -= amount;
         (bool success, ) = s_owner.call{value: amount}("");
         if (!success) {
             revert Raffle__TransferFailed();
         }
     }
 
-    function changeOwner(address addr)external onlyOwner{
-        s_owner=payable(addr);
+    function changeOwner(address addr) external onlyOwner {
+        if(addr==address(0)) revert Raffle__TransferFailed();
+        s_owner = payable(addr);
     }
 
     /** Getter Functions */
@@ -229,11 +230,11 @@ contract Raffle is VRFConsumerBaseV2, KeeperCompatibleInterface {
         return s_recentWinner;
     }
 
-    function getWinner(uint256 raffleId)external view returns(Winner memory){
+    function getWinner(uint256 raffleId) external view returns (Winner memory) {
         return s_raffleToWinner[raffleId];
     }
 
-    function getPlayer(uint256 raffleId,uint256 index) external view returns (address) {
+    function getPlayer(uint256 raffleId, uint256 index) external view returns (address) {
         return s_raffleToPlayers[raffleId][index];
     }
 
@@ -261,19 +262,23 @@ contract Raffle is VRFConsumerBaseV2, KeeperCompatibleInterface {
         return s_raffleToPlayers[s_currentRaffle].length;
     }
 
-    function getNumberOfPlayers(uint256 raffleId)external view returns(uint256){
+    function getNumberOfPlayers(uint256 raffleId) external view returns (uint256) {
         return s_raffleToPlayers[raffleId].length;
     }
 
-    function getMinimumRafflePayout()external view returns(uint256){
-        return s_minimumRafflePayout;
+    function getMinimumRafflePayout() external view returns (uint256) {
+        return i_minimumRafflePayout;
     }
 
-    function getFeeBalance()external view returns(uint256){
+    function getPoolTotal() external view returns (uint256) {
+        return (s_raffleToPlayers[s_currentRaffle].length * i_entranceFee * 90) / 100;
+    }
+
+    function getFeeBalance() external view returns (uint256) {
         return s_feeBalance;
     }
 
-    function getOwner()external view returns(address){
+    function getOwner() external view returns (address) {
         return s_owner;
     }
 }
