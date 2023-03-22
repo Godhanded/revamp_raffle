@@ -8,9 +8,11 @@ import "@chainlink/contracts/src/v0.8/interfaces/KeeperCompatibleInterface.sol";
 
 /* Errors */
 error Raffle__UpkeepNotNeeded(uint256 currentBalance, uint256 numPlayers, uint256 raffleState);
-error Raffle__TransferFailed();
 error Raffle__SendMoreToEnterRaffle();
+error Raffle__TransferFailed();
 error Raffle__RaffleNotOpen();
+error Raffle__AlreadyPaid();
+error Raffle__NotOwner();
 
 /**@title A revamp of Patrick Collins raffle contract
  * @author Godand
@@ -35,15 +37,34 @@ contract Raffle is VRFConsumerBaseV2, KeeperCompatibleInterface {
     // Lottery Variables
     uint256 private immutable i_interval;
     uint256 private immutable i_entranceFee;
+    uint256 private s_currentRaffle = 0;
     uint256 private s_lastTimeStamp;
-    address private s_recentWinner;
-    address payable[] private s_players;
+    uint256 private s_feeBalance = 0;
+    uint256 private s_minimumRafflePayout;
+    Winner private s_recentWinner;
+    address payable private s_owner;
     RaffleState private s_raffleState;
+
+    mapping(uint256 => address payable[]) private s_raffleToPlayers; // each raffle to its players
+    mapping(uint256 => Winner) private s_raffleToWinner; // each raffle to their winner
+
+    // winner structure
+    struct Winner {
+        address payable winner;
+        uint256 payAmount;
+        bool isPaid;
+    }
 
     /* Events */
     event RequestedRaffleWinner(uint256 indexed requestId);
-    event RaffleEnter(address indexed player);
-    event WinnerPicked(address indexed player);
+    event RaffleEnter(uint256 indexed raffleId, address indexed player);
+    event WinnerPicked(uint256 indexed raffleId,address indexed player);
+
+    /* Modifiers */
+    modifier onlyOwner {
+        if (payable(msg.sender)!=s_owner) revert Raffle__NotOwner();
+        _;
+    }
 
     /* Functions */
     constructor(
@@ -73,10 +94,12 @@ contract Raffle is VRFConsumerBaseV2, KeeperCompatibleInterface {
         if (s_raffleState != RaffleState.OPEN) {
             revert Raffle__RaffleNotOpen();
         }
-        s_players.push(payable(msg.sender));
+        uint256 currentRaffle = s_currentRaffle;
+        s_feeBalance += (msg.value * 10) / 100;
+        s_raffleToPlayers[currentRaffle].push(payable(msg.sender));
         // Emit an event when we update a dynamic array or mapping
         // Named events with the function name reversed
-        emit RaffleEnter(msg.sender);
+        emit RaffleEnter(currentRaffle, msg.sender);
     }
 
     /**
@@ -91,12 +114,14 @@ contract Raffle is VRFConsumerBaseV2, KeeperCompatibleInterface {
     function checkUpkeep(
         bytes memory /* checkData */
     ) public view override returns (bool upkeepNeeded, bytes memory /* performData */) {
+        uint256 playerLength = s_raffleToPlayers[s_currentRaffle].length;
         bool isOpen = RaffleState.OPEN == s_raffleState;
         bool timePassed = ((block.timestamp - s_lastTimeStamp) > i_interval);
-        bool hasPlayers = s_players.length > 0;
+        bool hasPlayers = playerLength > 0;
         bool hasBalance = address(this).balance > 0;
-        upkeepNeeded = (timePassed && isOpen && hasBalance && hasPlayers);
-        return (upkeepNeeded, "0x0"); // can we comment this out?
+        bool hasMinPayout = (playerLength * i_entranceFee) >= s_minimumRafflePayout;
+        upkeepNeeded = (timePassed && isOpen && hasBalance && hasPlayers && hasMinPayout);
+        return (upkeepNeeded, "0x0"); // can I comment this out?
     }
 
     /**
@@ -107,9 +132,10 @@ contract Raffle is VRFConsumerBaseV2, KeeperCompatibleInterface {
         (bool upkeepNeeded, ) = checkUpkeep("");
         // require(upkeepNeeded, "Upkeep not needed");
         if (!upkeepNeeded) {
+            uint256 playerLength = s_raffleToPlayers[s_currentRaffle].length;
             revert Raffle__UpkeepNotNeeded(
-                address(this).balance,
-                s_players.length,
+                playerLength * i_entranceFee,
+                playerLength,
                 uint256(s_raffleState)
             );
         }
@@ -121,7 +147,7 @@ contract Raffle is VRFConsumerBaseV2, KeeperCompatibleInterface {
             i_callbackGasLimit,
             NUM_WORDS
         );
-        // Quiz... is this redundant?
+        // is this redundant?
         emit RequestedRaffleWinner(requestId);
     }
 
@@ -133,24 +159,50 @@ contract Raffle is VRFConsumerBaseV2, KeeperCompatibleInterface {
         uint256 /* requestId */,
         uint256[] memory randomWords
     ) internal override {
-        // s_players size 10
+        // players size 10
         // randomNumber 202
         // 202 % 10 ? what's doesn't divide evenly into 202?
         // 20 * 10 = 200
         // 2
         // 202 % 10 = 2
-        uint256 indexOfWinner = randomWords[0] % s_players.length;
-        address payable recentWinner = s_players[indexOfWinner];
-        s_recentWinner = recentWinner;
-        s_players = new address payable[](0);
+        uint256 currentRaffle=s_currentRaffle;
+        address payable[] memory players = s_raffleToPlayers[currentRaffle];
+        uint256 indexOfWinner = randomWords[0] % players.length;
+        address payable recentWinner = players[indexOfWinner];
+        Winner memory winner=Winner(
+            payable(recentWinner),
+            (players.length * i_entranceFee * 90) / 100,
+            false
+        );
+        s_recentWinner = winner;
+        s_raffleToWinner[currentRaffle] = winner;
+        s_currentRaffle += 1;
         s_raffleState = RaffleState.OPEN;
         s_lastTimeStamp = block.timestamp;
-        (bool success, ) = recentWinner.call{value: address(this).balance}("");
-        // require(success, "Transfer failed");
+        emit WinnerPicked(currentRaffle,recentWinner);
+    }
+
+    function winnerWithdraw(uint256 raffleId)external{
+        Winner memory winner=s_raffleToWinner[raffleId];
+        if(winner.isPaid) revert Raffle__AlreadyPaid();
+        s_raffleToWinner[raffleId].isPaid=true;
+        (bool success, ) = winner.winner.call{value: winner.payAmount}("");
         if (!success) {
             revert Raffle__TransferFailed();
         }
-        emit WinnerPicked(recentWinner);
+    }
+
+    function ownerWithdraw(uint256 amount)external onlyOwner{
+        if(amount>s_feeBalance) revert Raffle__TransferFailed();
+        s_feeBalance-=amount;
+        (bool success, ) = s_owner.call{value: amount}("");
+        if (!success) {
+            revert Raffle__TransferFailed();
+        }
+    }
+
+    function changeOwner(address addr)external onlyOwner{
+        s_owner=payable(addr);
     }
 
     /** Getter Functions */
