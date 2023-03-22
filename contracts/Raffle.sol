@@ -23,8 +23,7 @@ contract Raffle is VRFConsumerBaseV2, KeeperCompatibleInterface {
     /* Type declarations */
     enum RaffleState {
         OPEN,
-        CALCULATING,
-        CAR
+        CALCULATING
     }
 
     // Winner structure
@@ -208,7 +207,7 @@ contract Raffle is VRFConsumerBaseV2, KeeperCompatibleInterface {
     }
 
     function changeOwner(address addr) external onlyOwner {
-        if(addr==address(0)) revert Raffle__TransferFailed();
+        if (addr == address(0)) revert Raffle__TransferFailed();
         s_owner = payable(addr);
     }
 
