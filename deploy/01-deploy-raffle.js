@@ -7,8 +7,16 @@ module.exports = async ({ getNamedAccounts, deployments }) => {
     const deployer = await getNamedAccounts()
     const chainId = network.config.chainId
 
-    netArgs = networkConfig[chainId]
-    args = []
+    const netArgs = networkConfig[chainId]
+    const args = [
+        netArgs.vrfCoordinatorV2,
+        netArgs.subscriptionId,
+        netArgs.gasLane,
+        netArgs.interval,
+        netArgs.entranceFee,
+        netArgs.minimumRafflePayout,
+        netArgs.callbackGasLimit,
+    ]
 
     const raffle = await deploy("Raffle", {
         from: deployer,
